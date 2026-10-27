@@ -4,6 +4,10 @@
 > See [SMOOTH_SCROLL.md](SMOOTH_SCROLL.md). Not affiliated with the Ghostty
 > project; for Ghostty itself see
 > [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty).
+>
+> **AI disclosure:** the fork's changes were written by Claude Code
+> (Claude Opus 5.5), directed, reviewed, and tested by a human. See
+> [SMOOTH_SCROLL.md](SMOOTH_SCROLL.md#ai-disclosure).
 
 <!-- LOGO -->
 <h1>

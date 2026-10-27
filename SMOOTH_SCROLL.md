@@ -6,9 +6,17 @@ TUI apps that opt in through a small escape sequence. It is an
 experiment, not an upstream proposal, and it is not affiliated with the
 Ghostty project.
 
-All changes live on the `smooth-scroll` branch. The patch was written with
-[Claude Code](https://claude.com/claude-code) (AI-assisted design and
-implementation, reviewed and tested by a human).
+All changes live on the `smooth-scroll` branch.
+
+## AI disclosure
+
+Following Ghostty's [AI usage policy](AI_POLICY.md): everything in this
+fork's changes (the Zig and Metal patch, the escape sequence design, the
+Ratatui demo, the Python prototype, and this document) was written by
+[Claude Code](https://claude.com/claude-code) using Claude Opus 5.5. A
+human directed the work, chose the design, read the full diff, and tested
+it by hand on macOS. No AI-generated media is included. This fork has not
+been submitted upstream.
 
 ## Why a terminal patch is needed
 
