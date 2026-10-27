@@ -33,6 +33,16 @@ preedit: ?Preedit = null,
 /// need about the mouse.
 mouse: Mouse = .{},
 
+/// Sub-row viewport scroll offset in pixels from precision (trackpad)
+/// scrolling. Positive shifts content down (toward scrollback). Always
+/// strictly less than one cell height in magnitude.
+scroll_offset_px: f32 = 0,
+
+/// Experimental app-declared smooth scroll region, set with
+/// `ESC _ smooth;top;bottom;pos;max ESC \` and cleared with
+/// `ESC _ smooth;off ESC \`. See `Smooth`.
+smooth: ?Smooth = null,
+
 /// The number of threads currently waiting to acquire `mutex` via
 /// `lockDemand`. This is not protected by the mutex; it is read by
 /// hot lock/unlock loops (the IO parse thread) in `yieldToDemand` to
@@ -233,3 +243,71 @@ test "preedit range shifts left at right edge" {
     try testing.expectEqual(@as(terminalpkg.size.CellCountInt, 9), range.end);
     try testing.expectEqual(@as(usize, 0), range.cp_offset);
 }
+
+/// A region of viewport rows the app scrolls one row per wheel event.
+/// Ghostty accumulates precision scroll input for it and shifts the
+/// region up by the sub-row remainder. `bottom` is an overscan row the
+/// app fills with the next line of content; it is only revealed as the
+/// region shifts.
+pub const Smooth = struct {
+    top: u16,
+    bottom: u16,
+
+    /// The app's current scroll position (top content row) and maximum.
+    pos: u32,
+    max: u32,
+
+    /// Accumulated scroll relative to `pos`, in rows. Positive moves
+    /// content up (scrolling down).
+    acc: f32 = 0,
+
+    /// Rows requested from the app via wheel events that are not yet
+    /// reflected in `pos`.
+    pending_rows: i32 = 0,
+
+    /// Parse the payload after `smooth;`. Returns null for `off`.
+    pub fn parse(payload: []const u8) error{Invalid}!?Smooth {
+        if (std.mem.eql(u8, payload, "off")) return null;
+        var it = std.mem.splitScalar(u8, payload, ';');
+        var v: [4]u32 = undefined;
+        for (&v) |*x| {
+            const s = it.next() orelse return error.Invalid;
+            x.* = std.fmt.parseInt(u32, s, 10) catch return error.Invalid;
+        }
+        if (v[0] >= v[1] or v[1] > std.math.maxInt(u16)) return error.Invalid;
+        return .{
+            .top = @intCast(v[0]),
+            .bottom = @intCast(v[1]),
+            .pos = v[2],
+            .max = v[3],
+        };
+    }
+
+    /// Apply a fresh declaration from the app, carrying over accumulated
+    /// scroll and acknowledging rows the app has moved since last time.
+    pub fn update(self: *Smooth, next: Smooth) void {
+        const moved: i64 = @as(i64, next.pos) - @as(i64, self.pos);
+        const same = self.top == next.top and self.bottom == next.bottom;
+
+        // Only movement in the direction of our pending wheel requests
+        // acknowledges them; moves the app made on its own (keyboard,
+        // jumps) leave the accumulated remainder alone.
+        var ack: i64 = 0;
+        if (moved > 0 and self.pending_rows > 0) ack = @min(moved, self.pending_rows);
+        if (moved < 0 and self.pending_rows < 0) ack = @max(moved, self.pending_rows);
+
+        const acc = self.acc - @as(f32, @floatFromInt(ack));
+        const pending = self.pending_rows - @as(i32, @intCast(ack));
+        self.* = next;
+        if (same) {
+            self.acc = acc;
+            self.pending_rows = pending;
+        }
+    }
+
+    /// The pixel offset to render: the sub-row remainder, held between
+    /// zero and just under one row since only one overscan row exists.
+    pub fn offsetRows(self: Smooth) f32 {
+        return std.math.clamp(self.acc, 0, 0.999);
+    }
+};

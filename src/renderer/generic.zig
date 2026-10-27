@@ -188,6 +188,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// The current GPU uniform values.
         uniforms: shaderpkg.Uniforms,
 
+        /// Sub-row smooth scroll offset in pixels (see State.scroll_offset_px)
+        /// and the value last baked into the uniforms.
+        scroll_offset_px: f32 = 0,
+        scroll_offset_applied: f32 = 0,
+
         /// Custom shader uniform values.
         custom_shader_uniforms: shadertoy.Uniforms,
 
@@ -1426,6 +1431,22 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     return;
                 }
 
+                // Smooth scroll: pick up the sub-row offset. Ignore it if the
+                // viewport has since snapped to the bottom (e.g. new output).
+                if (state.smooth) |s| {
+                    self.uniforms.smooth_rows = .{ s.top, s.bottom };
+                    self.uniforms.smooth_offset = s.offsetRows() *
+                        @as(f32, @floatFromInt(self.grid_metrics.cell_height));
+                } else {
+                    self.uniforms.smooth_rows = .{ 0, 0 };
+                    self.uniforms.smooth_offset = 0;
+                }
+
+                self.scroll_offset_px = if (state.terminal.screens.active.pages.viewport == .active)
+                    @max(state.scroll_offset_px, 0)
+                else
+                    state.scroll_offset_px;
+
                 // If scroll-to-bottom on output is enabled, check if the final line
                 // changed by comparing the bottom-right pin. If the node pointer or
                 // y offset changed, new content was added to the screen.
@@ -1847,6 +1868,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .width = surface_size.width,
                     .height = surface_size.height,
                 };
+                self.updateScreenSizeUniforms();
+            } else if (self.scroll_offset_px != self.scroll_offset_applied) {
                 self.updateScreenSizeUniforms();
             }
 
@@ -2284,15 +2307,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 },
             ).add(self.size.padding);
 
+            // Smooth scroll: shift the whole grid down by the sub-row offset.
+            const off = self.scroll_offset_px;
+            self.scroll_offset_applied = off;
+
             // Setup our uniforms
             self.uniforms.projection_matrix = @bitCast(math.ortho2d(
                 -1 * @as(f32, @floatFromInt(self.size.padding.left)),
                 @floatFromInt(terminal_size.width + self.size.padding.right),
-                @floatFromInt(terminal_size.height + self.size.padding.bottom),
-                -1 * @as(f32, @floatFromInt(self.size.padding.top)),
+                @as(f32, @floatFromInt(terminal_size.height + self.size.padding.bottom)) - off,
+                -1 * @as(f32, @floatFromInt(self.size.padding.top)) - off,
             ));
             self.uniforms.grid_padding = .{
-                @floatFromInt(blank.top),
+                @as(f32, @floatFromInt(blank.top)) + off,
                 @floatFromInt(blank.right),
                 @floatFromInt(blank.bottom),
                 @floatFromInt(blank.left),

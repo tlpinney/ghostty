@@ -66,7 +66,7 @@ pub const StreamHandler = struct {
     /// CSI or OSC, but it is a private escape sequence that is used
     /// to send commands to the terminal emulator. This is used by
     /// the kitty graphics protocol.
-    apc: terminal.apc.Handler = .{},
+    apc: terminal.apc.Handler = .{ .unknown_max_bytes = 128 },
 
     /// The DCS handler maintains DCS state. DCS is like CSI or OSC,
     /// but requires more stateful parsing. This is used by functionality
@@ -511,7 +511,21 @@ pub const StreamHandler = struct {
 
         // log.warn("APC command: {}", .{result});
         switch (result) {
-            .unknown => return,
+            .unknown => |*unknown| {
+                const prefix = "smooth;";
+                if (unknown.truncated or
+                    !std.mem.startsWith(u8, unknown.content, prefix)) return;
+                const next = renderer.State.Smooth.parse(
+                    unknown.content[prefix.len..],
+                ) catch {
+                    log.warn("invalid smooth APC: {s}", .{unknown.content});
+                    return;
+                };
+                if (next) |n| {
+                    if (self.renderer_state.smooth) |*cur| cur.update(n) else self.renderer_state.smooth = n;
+                } else self.renderer_state.smooth = null;
+                try self.queueRender();
+            },
             .kitty => |*kitty_cmd| {
                 if (self.terminal.kittyGraphics(global.io(), self.alloc, kitty_cmd)) |resp| {
                     var buf: [1024]u8 = undefined;
@@ -631,6 +645,15 @@ pub const StreamHandler = struct {
     }
 
     pub fn setMode(self: *StreamHandler, mode: terminal.Mode, enabled: bool) !void {
+        // A smooth scroll region belongs to the screen it was declared on.
+        switch (mode) {
+            .alt_screen_legacy,
+            .alt_screen,
+            .alt_screen_save_cursor_clear_enter,
+            => self.renderer_state.smooth = null,
+            else => {},
+        }
+
         // Note: this function doesn't need to grab the render state or
         // terminal locks because it is only called from process() which
         // grabs the lock.

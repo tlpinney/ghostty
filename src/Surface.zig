@@ -3644,7 +3644,7 @@ pub fn scrollCallback(
         // We scroll by the number of rows in the offset and save the remainder
         const amount = poff / cell_size;
         assert(@abs(amount) >= 1);
-        self.mouse.pending_scroll_y = poff - (amount * cell_size);
+        self.mouse.pending_scroll_y = poff - (@trunc(amount) * cell_size);
 
         // Round towards zero.
         const delta: isize = @intFromFloat(@trunc(amount));
@@ -3680,6 +3680,39 @@ pub fn scrollCallback(
     {
         self.renderer_state.mutex.lockUncancelable(global.io());
         defer self.renderer_state.mutex.unlock(global.io());
+
+        // Smooth scroll: only the plain viewport-scroll path below sets this.
+        self.renderer_state.scroll_offset_px = 0;
+
+        // App-declared smooth scroll region: precision scrolls over it
+        // accumulate here and become one wheel event per whole row.
+        if (scroll_mods.precision and yoff != 0 and self.isMouseReporting()) region: {
+            const s = &(self.renderer_state.smooth orelse break :region);
+            const pos = try self.rt_surface.getCursorPos();
+            const row = self.posToViewport(pos.x, pos.y).y;
+            if (row < s.top or row > s.bottom) break :region;
+
+            const cell_h: f64 = @floatFromInt(self.size.cell.height);
+            const px = yoff * self.config.mouse_scroll_multiplier.precision;
+            s.acc -= @floatCast(px / cell_h);
+
+            // Clamp to the app's scroll range.
+            const lo: f32 = -@as(f32, @floatFromInt(s.pos));
+            const hi: f32 = @floatFromInt(s.max -| s.pos);
+            s.acc = std.math.clamp(s.acc, lo, hi);
+
+            // Ask the app to move so that the remainder lands in [0, 1).
+            const want: i32 = @intFromFloat(@floor(s.acc));
+            const request = want - s.pending_rows;
+            s.pending_rows = want;
+            for (0..@abs(request)) |_| {
+                self.mouseReport(if (request > 0) .five else .four, .press, self.mouse.mods, pos);
+            }
+
+            self.mouse.pending_scroll_y = 0;
+            try self.queueRender();
+            return;
+        }
 
         // If we have an active mouse reporting mode, clear the selection.
         // The selection can occur if the user uses the shift mod key to
@@ -3754,6 +3787,20 @@ pub fn scrollCallback(
             // rendering. We have to switch signs here because our delta
             // is negative down but our viewport is positive down.
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
+        }
+
+        // Smooth scroll: publish the sub-row remainder so the renderer can
+        // shift the grid by pixels. Drop it at the ends of the scrollback.
+        if (scroll_mods.precision) {
+            const sb = self.io.terminal.screens.active.pages.scrollbar();
+            const off = self.mouse.pending_scroll_y;
+            if ((off > 0 and sb.offset == 0) or
+                (off < 0 and sb.offset + sb.len >= sb.total))
+            {
+                self.mouse.pending_scroll_y = 0;
+            } else {
+                self.renderer_state.scroll_offset_px = @floatCast(off);
+            }
         }
     }
 

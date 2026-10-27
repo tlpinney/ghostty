@@ -24,7 +24,15 @@ struct Uniforms {
   bool use_display_p3;
   bool use_linear_blending;
   bool use_linear_correction;
+  ushort2 smooth_rows;
+  float smooth_offset;
 };
+
+// Whether a grid row is inside the smooth scroll region (overscan included).
+static bool in_smooth_region(constant Uniforms& u, int row) {
+  return u.smooth_rows.x < u.smooth_rows.y &&
+         row >= int(u.smooth_rows.x) && row <= int(u.smooth_rows.y);
+}
 
 //-------------------------------------------------------------------
 // Color Functions
@@ -457,6 +465,14 @@ fragment float4 cell_bg_fragment(
 
   float4 bg = float4(0.0);
 
+  // Smooth scroll region: sample the cell the shifted content puts here.
+  // The overscan row's own screen space stays empty.
+  if (in_smooth_region(uniforms, grid_pos.y)) {
+    if (grid_pos.y == int(uniforms.smooth_rows.y)) return bg;
+    float y = in.position.y - uniforms.grid_padding.x + uniforms.smooth_offset;
+    grid_pos.y = int(floor(y / uniforms.cell_size.y));
+  }
+
   // Clamp x position, extends edge bg colors in to padding on sides.
   if (grid_pos.x < 0) {
     if (uniforms.padding_extend & EXTEND_LEFT) {
@@ -551,6 +567,7 @@ struct CellTextVertexOut {
   float4 color [[flat]];
   float4 bg_color [[flat]];
   float2 tex_coord;
+  float2 clip_y [[flat]];
 };
 
 vertex CellTextVertexOut cell_text_vertex(
@@ -582,6 +599,14 @@ vertex CellTextVertexOut cell_text_vertex(
 
   CellTextVertexOut out;
   out.atlas = in.atlas;
+
+  // Smooth scroll region: shift up and clip to the visible rows.
+  out.clip_y = float2(-1e9, 1e9);
+  if (in_smooth_region(uniforms, int(in.grid_pos.y))) {
+    cell_pos.y -= uniforms.smooth_offset;
+    out.clip_y = uniforms.grid_padding.x +
+        float2(uniforms.smooth_rows) * uniforms.cell_size.y;
+  }
 
   //              === Grid Cell ===
   //      +X
@@ -681,6 +706,10 @@ fragment float4 cell_text_fragment(
   texture2d<float> textureColor [[texture(1)]],
   constant Uniforms& uniforms [[buffer(1)]]
 ) {
+  if (in.position.y < in.clip_y.x || in.position.y >= in.clip_y.y) {
+    discard_fragment();
+  }
+
   constexpr sampler textureSampler(
     coord::pixel,
     address::clamp_to_edge,
