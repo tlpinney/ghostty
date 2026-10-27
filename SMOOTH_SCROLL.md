@@ -84,7 +84,19 @@ $G --config-file=smooth-scroll/zed-one-dark.conf \
 ```
 
 Use the trackpad over the text. `s` toggles the region declaration so you
-can compare with normal row scrolling; `q` quits. The Zed config expects
+can compare with normal row scrolling; `q` quits.
+
+`smooth-md` is a Markdown reader built on the same widget:
+
+```sh
+$G --config-file=smooth-scroll/zed-one-dark.conf \
+   -e smooth-scroll/target/release/smooth-md README.md
+```
+
+Keys: `j`/`k` line, `d`/`u` half page, `space`/`b` page, `g`/`G` top and
+bottom, `]`/`[` next and previous heading, `r` reload, `s` toggle smooth,
+`q` quit. The reusable `SmoothScroll` widget and word wrapper live in
+`smooth-scroll/src/lib.rs`. The Zed config expects
 the [Lilex](https://github.com/mishamyrt/Lilex) font.
 
 ## Known limitations

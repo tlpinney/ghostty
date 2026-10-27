@@ -1,10 +1,5 @@
 //! Ratatui demo for the experimental Ghostty smooth scroll region.
 //!
-//! The app declares its scroll view with `ESC _ smooth;top;bottom;pos;max ESC \`
-//! after every draw. A patched Ghostty accumulates trackpad pixels over that
-//! region, shifts it by the sub-row remainder, and sends one wheel event per
-//! whole row. The app just scrolls one row per wheel event and redraws.
-//!
 //! Keys: j/k or arrows scroll, s toggles the smooth declaration, q quits.
 //! See SMOOTH_SCROLL.md at the repository root for the protocol.
 
@@ -15,61 +10,11 @@ use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
 };
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 use ratatui::{DefaultTerminal, Frame};
-
-/// Scroll position for [`SmoothScroll`].
-#[derive(Default)]
-struct SmoothScrollState {
-    pos: usize,
-    max: usize,
-    /// The region last rendered: (top row, overscan bottom row).
-    region: Option<(u16, u16)>,
-}
-
-impl SmoothScrollState {
-    fn scroll(&mut self, rows: isize) {
-        self.pos = self.pos.saturating_add_signed(rows).min(self.max);
-    }
-
-    /// The APC declaring the region, or clearing it when `enabled` is false.
-    fn apc(&self, enabled: bool) -> String {
-        match (enabled, self.region) {
-            (true, Some((top, bottom))) => {
-                format!("\x1b_smooth;{top};{bottom};{};{}\x1b\\", self.pos, self.max)
-            }
-            _ => "\x1b_smooth;off\x1b\\".to_string(),
-        }
-    }
-}
-
-/// A scroll view that draws one extra line into its last row. Ghostty
-/// keeps that overscan row hidden and reveals it as the region shifts.
-struct SmoothScroll<'a> {
-    lines: &'a [Line<'a>],
-}
-
-impl StatefulWidget for SmoothScroll<'_> {
-    type State = SmoothScrollState;
-
-    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer, state: &mut Self::State) {
-        if area.height < 2 {
-            state.region = None;
-            return;
-        }
-        let visible = area.height as usize - 1;
-        state.max = self.lines.len().saturating_sub(visible);
-        state.pos = state.pos.min(state.max);
-
-        let end = (state.pos + area.height as usize).min(self.lines.len());
-        Paragraph::new(self.lines[state.pos..end].to_vec()).render(area, buf);
-        state.region = Some((area.y, area.y + area.height - 1));
-    }
-}
+use smooth_demo::{draw_smooth, SmoothScroll, SmoothScrollState, SMOOTH_OFF};
 
 fn sample_lines() -> Vec<Line<'static>> {
     let words = "render scroll pixel glyph metal shader atlas cell grid frame \
@@ -121,13 +66,7 @@ fn run(terminal: &mut DefaultTerminal) -> io::Result<()> {
     let mut smooth = true;
 
     loop {
-        // Cells and the region declaration land atomically, so Ghostty
-        // never shows new content with the old offset.
-        execute!(io::stdout(), BeginSynchronizedUpdate)?;
-        terminal.draw(|f| draw(f, &lines, &mut state, smooth))?;
-        let mut out = io::stdout();
-        out.write_all(state.apc(smooth).as_bytes())?;
-        execute!(out, EndSynchronizedUpdate)?;
+        draw_smooth(terminal, &mut state, smooth, |f, s| draw(f, &lines, s, smooth))?;
 
         // Block for the first event, then drain any queued ones before redrawing.
         let mut ev = Some(event::read()?);
@@ -161,7 +100,7 @@ fn main() -> io::Result<()> {
     execute!(io::stdout(), EnableMouseCapture)?;
     let result = run(&mut terminal);
     let mut out = io::stdout();
-    out.write_all(b"\x1b_smooth;off\x1b\\")?;
+    out.write_all(SMOOTH_OFF)?;
     execute!(out, DisableMouseCapture)?;
     ratatui::restore();
     result
