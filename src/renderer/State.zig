@@ -259,10 +259,15 @@ test "preedit range shifts left at right edge" {
 ///   ESC _ smooth;ID;top;bottom;left;right;pos;max ESC \   declare/update
 ///   ESC _ smooth;top;bottom;pos;max ESC \                 legacy: id 0, full width
 ///   ESC _ smooth;off[;ID] ESC \                           clear all or one
+///   ESC _ smooth;? ESC \                                  query; reply smooth;ok;2
 ///
 /// Rows and columns are 0-based and inclusive.
 pub const Smooth = struct {
     pub const max_regions = 8;
+
+    /// Reply to the capability query `ESC _ smooth;? ESC \`: the protocol
+    /// version this terminal implements.
+    pub const query_reply = "\x1b_smooth;ok;2\x1b\\";
 
     id: u32,
     top: u16,

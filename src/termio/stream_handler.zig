@@ -515,6 +515,12 @@ pub const StreamHandler = struct {
                 const prefix = "smooth;";
                 if (unknown.truncated or
                     !std.mem.startsWith(u8, unknown.content, prefix)) return;
+                // Capability query: answer with the protocol version so apps
+                // can tell this terminal supports smooth scroll regions.
+                if (std.mem.eql(u8, unknown.content[prefix.len..], "?")) {
+                    self.messageWriter(.{ .write_stable = renderer.State.Smooth.query_reply });
+                    return;
+                }
                 const cmd = renderer.State.Smooth.parse(
                     unknown.content[prefix.len..],
                 ) catch {
