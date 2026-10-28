@@ -80,13 +80,21 @@ the original kitty-graphics prototype (`prototype/smooth.py`) that runs in
 an unpatched terminal.
 
 ```sh
-zig build -Doptimize=ReleaseFast          # builds zig-out/Ghostty.app
+zig build -Doptimize=ReleaseFast
+(cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
+smooth-scroll/install.sh                  # builds/Ghostty-<sha>.app + builds/current
 (cd smooth-scroll && cargo build --release)
 
-G=zig-out/Ghostty.app/Contents/MacOS/ghostty
+G=builds/current/Contents/MacOS/ghostty
 $G --config-file=smooth-scroll/zed-one-dark.conf \
    -e smooth-scroll/target/release/smooth-demo
 ```
+
+`install.sh` copies each build into its own bundle. Don't rebuild into an
+app bundle that a running Ghostty uses: macOS kills the running process
+(Code Signature Invalid) when it pages in code that no longer matches.
+The `xcodebuild` step is run directly because `zig build` can report it as
+failed on Xcode 27 even when it succeeds.
 
 Use the trackpad over the text. `s` toggles the region declaration so you
 can compare with normal row scrolling; `q` quits.
@@ -106,6 +114,41 @@ bottom, `]`/`[` next and previous heading, `r` reload, `s` toggle smooth,
 `q` quit. The reusable `SmoothScroll` widget and word wrapper live in
 `smooth-scroll/src/lib.rs`. The Zed config expects
 the [Lilex](https://github.com/mishamyrt/Lilex) font.
+
+## Testing inside herdr
+
+The terminal multiplexer [herdr](https://github.com/herdrdev/herdr) needs
+its own patch to relay regions from panes to this Ghostty: see
+[tlpinney/herdr](https://github.com/tlpinney/herdr), branch
+`smooth-scroll` (based on herdr v0.9.5, with its own `SMOOTH_SCROLL.md`).
+Without it, apps inside herdr fall back to row scrolling.
+
+To try it next to an installed herdr without touching its session, build
+with debug assertions on. Herdr then uses its separate `herdr-dev` config
+and server:
+
+```sh
+cd herdr   # tlpinney/herdr, branch smooth-scroll
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_TARGET_DIR=target/devopt \
+  ZIG=/path/to/zig-0.16.0 cargo build --release
+```
+
+Launch it in this Ghostty from a clean environment. Started from inside
+another herdr pane, the inherited `HERDR_*` variables make it refuse to
+start ("nested herdr is disabled") or talk to the other server:
+
+```sh
+env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH \
+    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_BIN_PATH \
+  $G --config-file=smooth-scroll/zed-one-dark.conf \
+     -e /path/to/herdr/target/devopt/release/herdr
+```
+
+Split a pane and run `smooth-md` (or `smooth-demo --split`) in each half;
+each pane should scroll smoothly on its own while herdr's sidebar, tab bar,
+and the neighbouring pane stay still. Through herdr, fast flicks can pause
+briefly at row boundaries: each row costs a round trip through herdr, which
+renders at about 60 fps, and regions have only one overscan row.
 
 ## Known limitations
 
