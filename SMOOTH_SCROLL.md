@@ -90,7 +90,12 @@ $G --config-file=smooth-scroll/zed-one-dark.conf \
    -e smooth-scroll/target/release/smooth-demo
 ```
 
-`install.sh` copies each build into its own bundle. Don't rebuild into an
+`install.sh` copies each build into its own bundle, named "Ghostty Smooth"
+with its own bundle id (`com.tlpinney.ghostty-smooth`) and a recolored icon
+(`make-icon.py`), so it sits beside the official Ghostty and can be opened
+normally (`open builds/current`, Spotlight, or the Dock). macOS treats it as
+a separate app, so permissions such as Screen Recording are granted to it
+separately; `~/.config/ghostty/config` still applies. Don't rebuild into an
 app bundle that a running Ghostty uses: macOS kills the running process
 (Code Signature Invalid) when it pages in code that no longer matches.
 The `xcodebuild` step is run directly because `zig build` can report it as
@@ -158,8 +163,6 @@ renders at about 60 fps, and regions have only one overscan row.
 - Regions always show one blank row (the overscan row).
 - In the scrollback, a strip up to one row tall at the top or bottom edge
   can be blank mid-scroll, since rows outside the viewport aren't drawn.
-- Mouse selection hit-testing ignores the pixel offset, so clicks can land
-  one row off while the view sits between rows.
 - Images (kitty graphics) do not move with the offset.
 - Only the region parsing, acknowledgement, and table logic have unit
   tests (`zig build test -Dtest-filter=smooth`); rendering is tested by hand.
