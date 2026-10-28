@@ -254,12 +254,16 @@ pub const Uniforms = extern struct {
         use_linear_correction: bool align(1) = false,
     },
 
-    /// Smooth scroll region rows (top, overscan bottom). Disabled
-    /// when top >= bottom.
-    smooth_rows: [2]u16 align(4) = .{ 0, 0 },
+    /// Smooth scroll regions as (top, overscan bottom, left, right)
+    /// cells, inclusive. Only the first `smooth_count` are used.
+    smooth_rects: [max_smooth_regions][4]u16 align(8) = @splat(.{ 0, 0, 0, 0 }),
 
-    /// Pixels to shift the smooth scroll region up by.
-    smooth_offset: f32 align(4) = 0,
+    /// Pixels to shift each smooth scroll region up by.
+    smooth_offsets: [max_smooth_regions]f32 align(4) = @splat(0),
+
+    smooth_count: u32 align(4) = 0,
+
+    pub const max_smooth_regions = 8;
 
     const PaddingExtend = packed struct(u8) {
         left: bool = false,

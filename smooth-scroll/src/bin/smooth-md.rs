@@ -88,7 +88,7 @@ fn draw(frame: &mut Frame, doc: &mut Doc, state: &mut SmoothScrollState, smooth:
 
     let column = text_area(body);
     doc.layout(column.width);
-    frame.render_stateful_widget(SmoothScroll { lines: &doc.rows }, column, state);
+    frame.render_stateful_widget(SmoothScroll::new(&doc.rows).text_area(column), body, state);
 
     let name = doc.path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let section = doc.section(state.pos);
@@ -116,7 +116,9 @@ fn run(terminal: &mut DefaultTerminal, mut doc: Doc) -> io::Result<()> {
     let mut smooth = true;
 
     loop {
-        draw_smooth(terminal, &mut state, smooth, |f, s| draw(f, &mut doc, s, smooth))?;
+        draw_smooth(terminal, std::slice::from_mut(&mut state), smooth, |f, s| {
+            draw(f, &mut doc, &mut s[0], smooth)
+        })?;
 
         let half = (state.visible / 2).max(1) as isize;
         let page = state.visible.saturating_sub(1).max(1) as isize;

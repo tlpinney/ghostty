@@ -1433,13 +1433,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Smooth scroll: pick up the sub-row offset. Ignore it if the
                 // viewport has since snapped to the bottom (e.g. new output).
-                if (state.smooth) |s| {
-                    self.uniforms.smooth_rows = .{ s.top, s.bottom };
-                    self.uniforms.smooth_offset = s.offsetRows() *
-                        @as(f32, @floatFromInt(self.grid_metrics.cell_height));
-                } else {
-                    self.uniforms.smooth_rows = .{ 0, 0 };
-                    self.uniforms.smooth_offset = 0;
+                {
+                    const cell_h: f32 = @floatFromInt(self.grid_metrics.cell_height);
+                    var n: u32 = 0;
+                    for (state.smooth) |slot| {
+                        const s = slot orelse continue;
+                        if (n == self.uniforms.smooth_rects.len) break;
+                        self.uniforms.smooth_rects[n] = .{ s.top, s.bottom, s.left, s.right };
+                        self.uniforms.smooth_offsets[n] = s.offsetRows() * cell_h;
+                        n += 1;
+                    }
+                    self.uniforms.smooth_count = n;
                 }
 
                 self.scroll_offset_px = if (state.terminal.screens.active.pages.viewport == .active)

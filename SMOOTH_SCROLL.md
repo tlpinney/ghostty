@@ -36,17 +36,22 @@ momentum. Nothing to enable.
 
 ## 2. App-declared smooth scroll regions
 
-An app declares a region of viewport rows that it scrolls one row per
+An app declares rectangles of viewport cells that it scrolls one row per
 wheel event:
 
 ```
-ESC _ smooth ; top ; bottom ; pos ; max ESC \     declare / update
-ESC _ smooth ; off ESC \                          clear
+ESC _ smooth ; id ; top ; bottom ; left ; right ; pos ; max ESC \   declare / update
+ESC _ smooth ; top ; bottom ; pos ; max ESC \                       legacy: id 0, full width
+ESC _ smooth ; off ESC \                                            clear all regions
+ESC _ smooth ; off ; id ESC \                                       clear one region
 ```
 
-- `top`, `bottom`: 0-based viewport rows, inclusive. `bottom` is an
-  **overscan row**: the app fills it with the next line of content and
-  Ghostty keeps it hidden until the region shifts up into it.
+- `id`: identifies the region, so an app (or a multiplexer, one per pane)
+  can declare several side by side. Up to 8 regions are active at once.
+- `top`, `bottom`, `left`, `right`: 0-based viewport cells, inclusive.
+  `bottom` is an **overscan row**: the app fills it with the next line of
+  content and Ghostty keeps it hidden until the region shifts up into it.
+  Cells outside the rectangle are never shifted.
 - `pos`: the app's current scroll position (its first visible content line).
 - `max`: the largest `pos` the app allows.
 
@@ -86,6 +91,9 @@ $G --config-file=smooth-scroll/zed-one-dark.conf \
 Use the trackpad over the text. `s` toggles the region declaration so you
 can compare with normal row scrolling; `q` quits.
 
+`smooth-demo --split` shows two independently scrolled regions side by
+side, the layout a multiplexer such as herdr would declare for its panes.
+
 `smooth-md` is a Markdown reader built on the same widget:
 
 ```sh
@@ -110,4 +118,5 @@ the [Lilex](https://github.com/mishamyrt/Lilex) font.
 - Mouse selection hit-testing ignores the pixel offset, so clicks can land
   one row off while the view sits between rows.
 - Images (kitty graphics) do not move with the offset.
-- No tests yet.
+- Only the region parsing, acknowledgement, and table logic have unit
+  tests (`zig build test -Dtest-filter=smooth`); rendering is tested by hand.

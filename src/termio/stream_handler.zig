@@ -515,15 +515,13 @@ pub const StreamHandler = struct {
                 const prefix = "smooth;";
                 if (unknown.truncated or
                     !std.mem.startsWith(u8, unknown.content, prefix)) return;
-                const next = renderer.State.Smooth.parse(
+                const cmd = renderer.State.Smooth.parse(
                     unknown.content[prefix.len..],
                 ) catch {
                     log.warn("invalid smooth APC: {s}", .{unknown.content});
                     return;
                 };
-                if (next) |n| {
-                    if (self.renderer_state.smooth) |*cur| cur.update(n) else self.renderer_state.smooth = n;
-                } else self.renderer_state.smooth = null;
+                self.renderer_state.applySmooth(cmd);
                 try self.queueRender();
             },
             .kitty => |*kitty_cmd| {
@@ -650,7 +648,7 @@ pub const StreamHandler = struct {
             .alt_screen_legacy,
             .alt_screen,
             .alt_screen_save_cursor_clear_enter,
-            => self.renderer_state.smooth = null,
+            => self.renderer_state.applySmooth(.{ .clear = null }),
             else => {},
         }
 

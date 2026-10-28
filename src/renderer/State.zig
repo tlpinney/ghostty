@@ -9,6 +9,7 @@ const Inspector = @import("../inspector/main.zig").Inspector;
 const terminalpkg = @import("../terminal/main.zig");
 const inputpkg = @import("../input.zig");
 const renderer = @import("../renderer.zig");
+const log = std.log.scoped(.renderer_state);
 
 /// The mutex that must be held while reading any of the data in the
 /// members of this state. Note that the state itself is NOT protected
@@ -38,10 +39,9 @@ mouse: Mouse = .{},
 /// strictly less than one cell height in magnitude.
 scroll_offset_px: f32 = 0,
 
-/// Experimental app-declared smooth scroll region, set with
-/// `ESC _ smooth;top;bottom;pos;max ESC \` and cleared with
-/// `ESC _ smooth;off ESC \`. See `Smooth`.
-smooth: ?Smooth = null,
+/// Experimental app-declared smooth scroll regions, keyed by id. See
+/// `Smooth` for the escape sequence.
+smooth: [Smooth.max_regions]?Smooth = @splat(null),
 
 /// The number of threads currently waiting to acquire `mutex` via
 /// `lockDemand`. This is not protected by the mutex; it is read by
@@ -244,14 +244,25 @@ test "preedit range shifts left at right edge" {
     try testing.expectEqual(@as(usize, 0), range.cp_offset);
 }
 
-/// A region of viewport rows the app scrolls one row per wheel event.
+/// A rectangle of viewport cells the app scrolls one row per wheel event.
 /// Ghostty accumulates precision scroll input for it and shifts the
 /// region up by the sub-row remainder. `bottom` is an overscan row the
 /// app fills with the next line of content; it is only revealed as the
 /// region shifts.
+///
+///   ESC _ smooth;ID;top;bottom;left;right;pos;max ESC \   declare/update
+///   ESC _ smooth;top;bottom;pos;max ESC \                 legacy: id 0, full width
+///   ESC _ smooth;off[;ID] ESC \                           clear all or one
+///
+/// Rows and columns are 0-based and inclusive.
 pub const Smooth = struct {
+    pub const max_regions = 8;
+
+    id: u32,
     top: u16,
     bottom: u16,
+    left: u16,
+    right: u16,
 
     /// The app's current scroll position (top content row) and maximum.
     pos: u32,
@@ -265,29 +276,52 @@ pub const Smooth = struct {
     /// reflected in `pos`.
     pending_rows: i32 = 0,
 
-    /// Parse the payload after `smooth;`. Returns null for `off`.
-    pub fn parse(payload: []const u8) error{Invalid}!?Smooth {
-        if (std.mem.eql(u8, payload, "off")) return null;
+    pub const Command = union(enum) {
+        set: Smooth,
+        /// Clear one region, or all of them when null.
+        clear: ?u32,
+    };
+
+    /// Parse the payload after `smooth;`.
+    pub fn parse(payload: []const u8) error{Invalid}!Command {
+        var v: [7]u32 = undefined;
+        var n: usize = 0;
         var it = std.mem.splitScalar(u8, payload, ';');
-        var v: [4]u32 = undefined;
-        for (&v) |*x| {
-            const s = it.next() orelse return error.Invalid;
-            x.* = std.fmt.parseInt(u32, s, 10) catch return error.Invalid;
+        if (std.mem.eql(u8, it.peek() orelse "", "off")) {
+            _ = it.next();
+            const id = it.next() orelse return .{ .clear = null };
+            return .{ .clear = std.fmt.parseInt(u32, id, 10) catch return error.Invalid };
         }
-        if (v[0] >= v[1] or v[1] > std.math.maxInt(u16)) return error.Invalid;
-        return .{
-            .top = @intCast(v[0]),
-            .bottom = @intCast(v[1]),
-            .pos = v[2],
-            .max = v[3],
+        while (it.next()) |field| {
+            if (n == v.len) return error.Invalid;
+            v[n] = std.fmt.parseInt(u32, field, 10) catch return error.Invalid;
+            n += 1;
+        }
+        const r: [7]u32 = switch (n) {
+            4 => .{ 0, v[0], v[1], 0, std.math.maxInt(u16), v[2], v[3] },
+            7 => v,
+            else => return error.Invalid,
         };
+        const max16 = std.math.maxInt(u16);
+        if (r[1] >= r[2] or r[2] > max16 or r[3] > r[4] or r[4] > max16)
+            return error.Invalid;
+        return .{ .set = .{
+            .id = r[0],
+            .top = @intCast(r[1]),
+            .bottom = @intCast(r[2]),
+            .left = @intCast(r[3]),
+            .right = @intCast(r[4]),
+            .pos = r[5],
+            .max = r[6],
+        } };
     }
 
     /// Apply a fresh declaration from the app, carrying over accumulated
     /// scroll and acknowledging rows the app has moved since last time.
     pub fn update(self: *Smooth, next: Smooth) void {
         const moved: i64 = @as(i64, next.pos) - @as(i64, self.pos);
-        const same = self.top == next.top and self.bottom == next.bottom;
+        const same = self.top == next.top and self.bottom == next.bottom and
+            self.left == next.left and self.right == next.right;
 
         // Only movement in the direction of our pending wheel requests
         // acknowledges them; moves the app made on its own (keyboard,
@@ -305,9 +339,121 @@ pub const Smooth = struct {
         }
     }
 
+    pub fn contains(self: Smooth, x: usize, y: usize) bool {
+        return y >= self.top and y <= self.bottom and x >= self.left and x <= self.right;
+    }
+
     /// The pixel offset to render: the sub-row remainder, held between
     /// zero and just under one row since only one overscan row exists.
     pub fn offsetRows(self: Smooth) f32 {
         return std.math.clamp(self.acc, 0, 0.999);
     }
 };
+
+/// Apply a parsed smooth scroll command to the region table. Caller must
+/// hold the mutex.
+pub fn applySmooth(self: *State, cmd: Smooth.Command) void {
+    switch (cmd) {
+        .clear => |id| for (&self.smooth) |*slot| {
+            const s = slot.* orelse continue;
+            if (id == null or s.id == id.?) slot.* = null;
+        },
+        .set => |next| {
+            var free: ?*?Smooth = null;
+            for (&self.smooth) |*slot| {
+                if (slot.*) |*s| {
+                    if (s.id == next.id) {
+                        s.update(next);
+                        return;
+                    }
+                } else if (free == null) {
+                    free = slot;
+                }
+            }
+            if (free) |slot| {
+                slot.* = next;
+            } else {
+                log.warn("smooth scroll region table full, ignoring id={}", .{next.id});
+            }
+        },
+    }
+}
+
+/// The smooth scroll region containing viewport cell (x, y), if any.
+/// Caller must hold the mutex.
+pub fn smoothAt(self: *State, x: usize, y: usize) ?*Smooth {
+    for (&self.smooth) |*slot| {
+        if (slot.*) |*s| {
+            if (s.contains(x, y)) return s;
+        }
+    }
+    return null;
+}
+
+test "smooth: parse v2, legacy, and clear" {
+    const testing = std.testing;
+
+    const v2 = (try Smooth.parse("3;2;20;10;59;5;100")).set;
+    try testing.expectEqual(@as(u32, 3), v2.id);
+    try testing.expectEqual(@as(u16, 2), v2.top);
+    try testing.expectEqual(@as(u16, 20), v2.bottom);
+    try testing.expectEqual(@as(u16, 10), v2.left);
+    try testing.expectEqual(@as(u16, 59), v2.right);
+    try testing.expectEqual(@as(u32, 5), v2.pos);
+    try testing.expectEqual(@as(u32, 100), v2.max);
+
+    const legacy = (try Smooth.parse("1;30;0;80")).set;
+    try testing.expectEqual(@as(u32, 0), legacy.id);
+    try testing.expectEqual(@as(u16, 0), legacy.left);
+    try testing.expectEqual(@as(u16, std.math.maxInt(u16)), legacy.right);
+
+    try testing.expectEqual(@as(?u32, null), (try Smooth.parse("off")).clear);
+    try testing.expectEqual(@as(?u32, 4), (try Smooth.parse("off;4")).clear);
+
+    try testing.expectError(error.Invalid, Smooth.parse("5;5;0;1")); // top >= bottom
+    try testing.expectError(error.Invalid, Smooth.parse("0;1;5;9;4;0;1")); // left > right
+    try testing.expectError(error.Invalid, Smooth.parse("1;2;3"));
+    try testing.expectError(error.Invalid, Smooth.parse("1;x;3;4"));
+}
+
+test "smooth: update acknowledges only requested rows" {
+    const testing = std.testing;
+    var s = (try Smooth.parse("0;1;10;0;79;5;100")).set;
+    s.acc = 2.25;
+    s.pending_rows = 2;
+
+    // The app moved the two rows we asked for.
+    s.update((try Smooth.parse("0;1;10;0;79;7;100")).set);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), s.acc, 0.0001);
+    try testing.expectEqual(@as(i32, 0), s.pending_rows);
+
+    // A move the app made on its own leaves the remainder alone.
+    s.update((try Smooth.parse("0;1;10;0;79;20;100")).set);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), s.acc, 0.0001);
+
+    // Moving the region resets accumulated state.
+    s.update((try Smooth.parse("0;2;11;0;79;20;100")).set);
+    try testing.expectEqual(@as(f32, 0), s.acc);
+}
+
+test "smooth: region table by id and hit testing" {
+    const testing = std.testing;
+    var state: State = .{ .mutex = undefined, .terminal = undefined };
+
+    state.applySmooth(try Smooth.parse("1;0;10;0;39;0;50"));
+    state.applySmooth(try Smooth.parse("2;0;10;40;79;0;50"));
+    try testing.expectEqual(@as(u32, 1), state.smoothAt(5, 3).?.id);
+    try testing.expectEqual(@as(u32, 2), state.smoothAt(45, 3).?.id);
+    try testing.expectEqual(@as(?*Smooth, null), state.smoothAt(45, 11));
+
+    // Re-declaring id 2 updates in place rather than adding a region.
+    state.applySmooth(try Smooth.parse("2;0;10;40;79;3;50"));
+    var count: usize = 0;
+    for (state.smooth) |slot| count += @intFromBool(slot != null);
+    try testing.expectEqual(@as(usize, 2), count);
+
+    state.applySmooth(try Smooth.parse("off;1"));
+    try testing.expectEqual(@as(?*Smooth, null), state.smoothAt(5, 3));
+    state.applySmooth(try Smooth.parse("off"));
+    try testing.expectEqual(@as(?*Smooth, null), state.smoothAt(45, 3));
+}

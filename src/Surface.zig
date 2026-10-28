@@ -3687,10 +3687,9 @@ pub fn scrollCallback(
         // App-declared smooth scroll region: precision scrolls over it
         // accumulate here and become one wheel event per whole row.
         if (scroll_mods.precision and yoff != 0 and self.isMouseReporting()) region: {
-            const s = &(self.renderer_state.smooth orelse break :region);
             const pos = try self.rt_surface.getCursorPos();
-            const row = self.posToViewport(pos.x, pos.y).y;
-            if (row < s.top or row > s.bottom) break :region;
+            const cell = self.posToViewport(pos.x, pos.y);
+            const s = self.renderer_state.smoothAt(cell.x, cell.y) orelse break :region;
 
             const cell_h: f64 = @floatFromInt(self.size.cell.height);
             const px = yoff * self.config.mouse_scroll_multiplier.precision;

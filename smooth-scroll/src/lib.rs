@@ -1,7 +1,7 @@
 //! A Ratatui scroll view for the experimental Ghostty smooth scroll region.
 //!
-//! The app declares its scroll view with `ESC _ smooth;top;bottom;pos;max ESC \`
-//! after every draw. A patched Ghostty accumulates trackpad pixels over that
+//! The app declares its scroll view with
+//! `ESC _ smooth;id;top;bottom;left;right;pos;max ESC \` after every draw. A patched Ghostty accumulates trackpad pixels over that
 //! region, shifts it by the sub-row remainder, and sends one wheel event per
 //! whole row. The app just scrolls one row per wheel event and redraws.
 //! See SMOOTH_SCROLL.md at the repository root for the protocol.
@@ -17,7 +17,7 @@ use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 use ratatui::{DefaultTerminal, Frame};
 use unicode_width::UnicodeWidthStr;
 
-/// Clears any declared region; send on exit.
+/// Clears all of the app's declared regions; send on exit.
 pub const SMOOTH_OFF: &[u8] = b"\x1b_smooth;off\x1b\\";
 
 /// Scroll position for [`SmoothScroll`].
@@ -27,11 +27,18 @@ pub struct SmoothScrollState {
     pub max: usize,
     /// Content rows visible at once (the region minus its overscan row).
     pub visible: usize,
-    /// The region last rendered: (top row, overscan bottom row).
-    region: Option<(u16, u16)>,
+    /// Region id, unique among the app's scroll views.
+    pub id: u32,
+    /// The region last rendered.
+    region: Option<Rect>,
 }
 
 impl SmoothScrollState {
+    /// A state for a scroll view with region id `id`.
+    pub fn with_id(id: u32) -> Self {
+        Self { id, ..Default::default() }
+    }
+
     pub fn scroll(&mut self, rows: isize) {
         self.pos = self.pos.saturating_add_signed(rows).min(self.max);
     }
@@ -40,13 +47,25 @@ impl SmoothScrollState {
         self.pos = pos.min(self.max);
     }
 
+    /// Whether the region last rendered contains the cell (x, y).
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        self.region.is_some_and(|r| r.contains(ratatui::layout::Position { x, y }))
+    }
+
     /// The APC declaring the region, or clearing it when `enabled` is false.
     pub fn apc(&self, enabled: bool) -> String {
         match (enabled, self.region) {
-            (true, Some((top, bottom))) => {
-                format!("\x1b_smooth;{top};{bottom};{};{}\x1b\\", self.pos, self.max)
-            }
-            _ => "\x1b_smooth;off\x1b\\".to_string(),
+            (true, Some(r)) => format!(
+                "\x1b_smooth;{};{};{};{};{};{};{}\x1b\\",
+                self.id,
+                r.y,
+                r.bottom() - 1,
+                r.x,
+                r.right() - 1,
+                self.pos,
+                self.max
+            ),
+            _ => format!("\x1b_smooth;off;{}\x1b\\", self.id),
         }
     }
 }
@@ -54,8 +73,24 @@ impl SmoothScrollState {
 /// A scroll view over pre-wrapped lines (one line per row). It draws one
 /// extra line into its last row; Ghostty keeps that overscan row hidden and
 /// reveals it as the region shifts.
+///
+/// The whole render area is declared as the region; `text` optionally
+/// narrows where lines are drawn (e.g. a centered column with margins).
 pub struct SmoothScroll<'a> {
-    pub lines: &'a [Line<'a>],
+    lines: &'a [Line<'a>],
+    text: Option<Rect>,
+}
+
+impl<'a> SmoothScroll<'a> {
+    pub fn new(lines: &'a [Line<'a>]) -> Self {
+        Self { lines, text: None }
+    }
+
+    /// Draw lines into `text` (within the render area) instead of the whole area.
+    pub fn text_area(mut self, text: Rect) -> Self {
+        self.text = Some(text);
+        self
+    }
 }
 
 impl StatefulWidget for SmoothScroll<'_> {
@@ -71,8 +106,9 @@ impl StatefulWidget for SmoothScroll<'_> {
         state.pos = state.pos.min(state.max);
 
         let end = (state.pos + area.height as usize).min(self.lines.len());
-        Paragraph::new(self.lines[state.pos..end].to_vec()).render(area, buf);
-        state.region = Some((area.y, area.y + area.height - 1));
+        let text = self.text.map_or(area, |t| t.intersection(area));
+        Paragraph::new(self.lines[state.pos..end].to_vec()).render(text, buf);
+        state.region = Some(area);
     }
 }
 
@@ -80,15 +116,17 @@ impl StatefulWidget for SmoothScroll<'_> {
 /// Ghostty never shows new content with the old offset.
 pub fn draw_smooth(
     terminal: &mut DefaultTerminal,
-    state: &mut SmoothScrollState,
+    states: &mut [SmoothScrollState],
     smooth: bool,
-    render: impl FnOnce(&mut Frame, &mut SmoothScrollState),
+    render: impl FnOnce(&mut Frame, &mut [SmoothScrollState]),
 ) -> io::Result<()> {
     execute!(io::stdout(), BeginSynchronizedUpdate)?;
-    terminal.draw(|f| render(f, state))?;
-    // The region comes from this draw, so declare it after rendering.
+    terminal.draw(|f| render(f, states))?;
+    // Regions come from this draw, so declare them after rendering.
     let mut out = io::stdout();
-    out.write_all(state.apc(smooth).as_bytes())?;
+    for state in states.iter() {
+        out.write_all(state.apc(smooth).as_bytes())?;
+    }
     execute!(out, EndSynchronizedUpdate)
 }
 

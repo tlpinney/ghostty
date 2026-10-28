@@ -24,14 +24,21 @@ struct Uniforms {
   bool use_display_p3;
   bool use_linear_blending;
   bool use_linear_correction;
-  ushort2 smooth_rows;
-  float smooth_offset;
+  ushort4 smooth_rects[8];
+  float smooth_offsets[8];
+  uint smooth_count;
 };
 
-// Whether a grid row is inside the smooth scroll region (overscan included).
-static bool in_smooth_region(constant Uniforms& u, int row) {
-  return u.smooth_rows.x < u.smooth_rows.y &&
-         row >= int(u.smooth_rows.x) && row <= int(u.smooth_rows.y);
+// The smooth scroll region containing a grid cell (overscan included),
+// or -1. Rects are (top, overscan bottom, left, right), inclusive.
+static int smooth_region_at(constant Uniforms& u, int2 cell) {
+  for (uint i = 0; i < u.smooth_count; i++) {
+    int4 r = int4(u.smooth_rects[i]);
+    if (cell.y >= r.x && cell.y <= r.y && cell.x >= r.z && cell.x <= r.w) {
+      return int(i);
+    }
+  }
+  return -1;
 }
 
 //-------------------------------------------------------------------
@@ -467,9 +474,10 @@ fragment float4 cell_bg_fragment(
 
   // Smooth scroll region: sample the cell the shifted content puts here.
   // The overscan row's own screen space stays empty.
-  if (in_smooth_region(uniforms, grid_pos.y)) {
-    if (grid_pos.y == int(uniforms.smooth_rows.y)) return bg;
-    float y = in.position.y - uniforms.grid_padding.x + uniforms.smooth_offset;
+  int region = smooth_region_at(uniforms, grid_pos);
+  if (region >= 0) {
+    if (grid_pos.y == int(uniforms.smooth_rects[region].y)) return bg;
+    float y = in.position.y - uniforms.grid_padding.x + uniforms.smooth_offsets[region];
     grid_pos.y = int(floor(y / uniforms.cell_size.y));
   }
 
@@ -567,7 +575,7 @@ struct CellTextVertexOut {
   float4 color [[flat]];
   float4 bg_color [[flat]];
   float2 tex_coord;
-  float2 clip_y [[flat]];
+  float4 clip [[flat]];
 };
 
 vertex CellTextVertexOut cell_text_vertex(
@@ -600,12 +608,17 @@ vertex CellTextVertexOut cell_text_vertex(
   CellTextVertexOut out;
   out.atlas = in.atlas;
 
-  // Smooth scroll region: shift up and clip to the visible rows.
-  out.clip_y = float2(-1e9, 1e9);
-  if (in_smooth_region(uniforms, int(in.grid_pos.y))) {
-    cell_pos.y -= uniforms.smooth_offset;
-    out.clip_y = uniforms.grid_padding.x +
-        float2(uniforms.smooth_rows) * uniforms.cell_size.y;
+  // Smooth scroll region: shift up and clip to the visible cells.
+  // clip is (top, bottom, left, right) in pixels.
+  out.clip = float4(-1e9, 1e9, -1e9, 1e9);
+  int region = smooth_region_at(uniforms, int2(in.grid_pos));
+  if (region >= 0) {
+    float4 r = float4(uniforms.smooth_rects[region]);
+    cell_pos.y -= uniforms.smooth_offsets[region];
+    out.clip = float4(
+      uniforms.grid_padding.x + r.xy * uniforms.cell_size.y,
+      uniforms.grid_padding.w + float2(r.z, r.w + 1) * uniforms.cell_size.x
+    );
   }
 
   //              === Grid Cell ===
@@ -706,7 +719,8 @@ fragment float4 cell_text_fragment(
   texture2d<float> textureColor [[texture(1)]],
   constant Uniforms& uniforms [[buffer(1)]]
 ) {
-  if (in.position.y < in.clip_y.x || in.position.y >= in.clip_y.y) {
+  if (in.position.y < in.clip.x || in.position.y >= in.clip.y ||
+      in.position.x < in.clip.z || in.position.x >= in.clip.w) {
     discard_fragment();
   }
 
