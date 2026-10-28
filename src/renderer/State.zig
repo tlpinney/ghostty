@@ -43,6 +43,12 @@ scroll_offset_px: f32 = 0,
 /// `Smooth` for the escape sequence.
 smooth: [Smooth.max_regions]?Smooth = @splat(null),
 
+/// Copy of the displayed smooth scroll offsets for pointer hit testing,
+/// readable without `mutex` (callers of `posToViewport` may or may not hold
+/// it). Writers hold `mutex` and bump `hit_seq` around updates (seqlock).
+hit_seq: std.atomic.Value(u32) = .init(0),
+hit: Hit = .{},
+
 /// The number of threads currently waiting to acquire `mutex` via
 /// `lockDemand`. This is not protected by the mutex; it is read by
 /// hot lock/unlock loops (the IO parse thread) in `yieldToDemand` to
@@ -456,4 +462,70 @@ test "smooth: region table by id and hit testing" {
     try testing.expectEqual(@as(?*Smooth, null), state.smoothAt(5, 3));
     state.applySmooth(try Smooth.parse("off"));
     try testing.expectEqual(@as(?*Smooth, null), state.smoothAt(45, 3));
+}
+
+/// Displayed pixel-scroll offsets, as used for pointer hit testing.
+pub const Hit = struct {
+    /// Scrollback shift in pixels; positive moves content down.
+    scrollback_px: f32 = 0,
+    regions: [Smooth.max_regions]?HitRegion = @splat(null),
+
+    pub const HitRegion = struct {
+        top: u16,
+        bottom: u16,
+        left: u16,
+        right: u16,
+        /// Rows the region's content is shifted up by.
+        offset_rows: f32,
+    };
+};
+
+/// Refresh the hit-testing copy of the offsets. Caller must hold the mutex.
+pub fn publishHit(self: *State) void {
+    var next: Hit = .{ .scrollback_px = self.scroll_offset_px };
+    for (self.smooth, 0..) |slot, i| {
+        const s = slot orelse continue;
+        next.regions[i] = .{
+            .top = s.top,
+            .bottom = s.bottom,
+            .left = s.left,
+            .right = s.right,
+            .offset_rows = s.offsetRows(),
+        };
+    }
+    _ = self.hit_seq.fetchAdd(1, .acq_rel);
+    const dst: *volatile Hit = &self.hit;
+    dst.* = next;
+    _ = self.hit_seq.fetchAdd(1, .acq_rel);
+}
+
+/// A consistent copy of the hit-testing offsets. Safe without the mutex.
+pub fn readHit(self: *const State) Hit {
+    while (true) {
+        const before = self.hit_seq.load(.acquire);
+        if (before & 1 == 1) {
+            std.atomic.spinLoopHint();
+            continue;
+        }
+        const src: *const volatile Hit = &self.hit;
+        const copy = src.*;
+        if (self.hit_seq.load(.acquire) == before) return copy;
+    }
+}
+
+test "smooth: hit snapshot mirrors displayed offsets" {
+    const testing = std.testing;
+    var state: State = .{ .mutex = undefined, .terminal = undefined };
+    state.applySmooth(try Smooth.parse("1;2;10;0;39;0;50"));
+    state.smoothAt(5, 3).?.acc = 0.4;
+    state.scroll_offset_px = 7;
+    state.publishHit();
+
+    const hit = state.readHit();
+    try testing.expectEqual(@as(f32, 7), hit.scrollback_px);
+    const r = hit.regions[0].?;
+    try testing.expectEqual(@as(u16, 2), r.top);
+    try testing.expectEqual(@as(u16, 10), r.bottom);
+    try testing.expectApproxEqAbs(@as(f32, 0.4), r.offset_rows, 0.0001);
+    try testing.expectEqual(@as(?Hit.HitRegion, null), hit.regions[1]);
 }

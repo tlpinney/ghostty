@@ -3680,6 +3680,8 @@ pub fn scrollCallback(
     {
         self.renderer_state.mutex.lockUncancelable(global.io());
         defer self.renderer_state.mutex.unlock(global.io());
+        // Runs before the unlock above (defers run in reverse order).
+        defer self.renderer_state.publishHit();
 
         // Smooth scroll: only the plain viewport-scroll path below sets this.
         self.renderer_state.scroll_offset_px = 0;
@@ -4936,8 +4938,25 @@ pub fn colorSchemeCallback(self: *Surface, scheme: apprt.ColorScheme) !void {
 }
 
 pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordinate {
+    const cell = self.posToViewportUnshifted(xpos, ypos);
+
+    // Smooth scrolling draws content shifted by sub-row pixel offsets; map
+    // the pointer to the cell actually displayed under it.
+    const hit = self.renderer_state.readHit();
+    const cell_h: f64 = @floatFromInt(self.size.cell.height);
+    for (hit.regions) |slot| {
+        const r = slot orelse continue;
+        if (cell.x < r.left or cell.x > r.right or cell.y < r.top or cell.y >= r.bottom) continue;
+        const shifted = self.posToViewportUnshifted(xpos, ypos + @as(f64, r.offset_rows) * cell_h);
+        return .{ .x = cell.x, .y = @min(shifted.y, r.bottom) };
+    }
+    if (hit.scrollback_px != 0) return self.posToViewportUnshifted(xpos, ypos - @as(f64, hit.scrollback_px));
+    return cell;
+}
+
+fn posToViewportUnshifted(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordinate {
     // Get our grid cell
-    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = xpos, .y = ypos } };
+    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = xpos, .y = @max(0, ypos) } };
     const grid = coord.convert(.grid, self.size).grid;
     return .{ .x = grid.x, .y = grid.y };
 }
