@@ -72,6 +72,12 @@ The region is cleared on `smooth;off` and when the app switches between
 the primary and alternate screen. Terminals that don't know the sequence
 ignore the APC, so apps degrade to normal row scrolling.
 
+### Apps using it
+
+- [pixelscroll.nvim](https://github.com/tlpinney/pixelscroll.nvim): pixel
+  scrolling for Neovim (and LazyVim) windows. Turn it on with
+  `SMOOTH_SCROLL=1`, directly in Ghostty Smooth or inside the herdr fork.
+
 ## Demo
 
 `smooth-scroll/` contains a Ratatui app with a `SmoothScroll` widget, a
