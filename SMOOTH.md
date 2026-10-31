@@ -148,6 +148,31 @@ bottom, `]`/`[` next and previous heading, `r` reload, `s` toggle smooth,
 `smooth-scroll/src/lib.rs`. The Zed config expects
 the [Lilex](https://github.com/mishamyrt/Lilex) font.
 
+## Releases
+
+**Experimental builds.** These are test builds of a personal fork, not
+official Ghostty releases. They may be unstable, and they are not
+affiliated with the Ghostty project.
+
+Signed builds for macOS on Apple Silicon are published as GitHub releases
+tagged `smooth-vYYYY.MM.DD`. Install the latest with:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/tlpinney/ghostty/smooth/smooth-scroll/release/install.sh
+sh install.sh              # or: sh install.sh smooth-v2026.10.31
+```
+
+The script installs `~/Applications/Ghostty Smooth.app` only after checking
+that `SHA256SUMS` carries a valid SSH signature from the key in
+`smooth-scroll/signing/allowed_signers` (namespace `ghostty-smooth-release`)
+and that the archive matches it. The app is not notarized by Apple, so the
+script clears the quarantine flag once both checks pass. CI
+(`.github/workflows/smooth-release.yml`) builds, checksums, and attests
+provenance, but never holds the signing key: releases stay drafts until
+the maintainer signs them offline with `just -f smooth-scroll/justfile
+sign-release <tag>`. Builds of this fork for Linux are not offered yet: the
+smooth rendering only exists in the Metal renderer.
+
 ## Testing inside herdr
 
 The terminal multiplexer [herdr](https://github.com/herdrdev/herdr) needs

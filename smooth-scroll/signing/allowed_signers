@@ -1,0 +1,3 @@
+# Keys trusted to sign Ghostty Smooth releases (SHA256SUMS), checked with
+# ssh-keygen -Y verify. Namespace: ghostty-smooth-release.
+tlpinney namespaces="ghostty-smooth-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFSZDt6uNCxuvSttHDBUcV1dctXJ1DBwYnQdbk19FfFP

@@ -1,0 +1,110 @@
+name: smooth-release
+
+# Release builds of this fork ("Ghostty Smooth"), macOS Apple Silicon only.
+#
+# Pushing a tag like smooth-v2026.10.31 (or smooth-v2026.10.31.2) on the `smooth`
+# branch runs the smooth scroll tests, builds the app, and creates a DRAFT
+# release with SHA256SUMS and build provenance attestations. The maintainer
+# signs SHA256SUMS offline and publishes with
+# `just -f smooth-scroll/justfile sign-release <tag>`; CI never holds the
+# signing key. Upstream's own release workflow only reacts to vX.Y.Z tags.
+#
+# Actions are pinned to full commit SHAs; the comment shows the release.
+on:
+  push:
+    tags: ["smooth-v*"]
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: 0.17.0
+  ZIG_SHA256: b607e9b9234790a008116ae5bdb71c6243b84b9fb42a53a9e70fde41c06c536a
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Tag is on the smooth branch
+        run: |
+          git fetch --no-tags origin smooth
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/smooth
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSLo zig.tar.xz "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz"
+          echo "$ZIG_SHA256  zig.tar.xz" | shasum -a 256 -c
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          rm zig.tar.xz
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: Xcode and Metal toolchain
+        run: |
+          xcodebuild -version
+          xcrun -f metal >/dev/null 2>&1 && xcrun metal --version >/dev/null 2>&1 \
+            || xcodebuild -downloadComponent MetalToolchain
+      - name: uv (for the icon script)
+        run: brew install uv
+      - name: Smooth scroll tests
+        run: zig build test -Dtest-filter=smooth --summary all
+      - name: Build
+        run: |
+          zig build -Doptimize=ReleaseFast
+          (cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
+      - name: Package
+        run: |
+          smooth-scroll/install.sh
+          app="$(readlink builds/current)"
+          case "$app" in *dirty*) echo "refusing to release a dirty build: $app"; exit 1;; esac
+          mkdir -p dist
+          ditto -c -k --keepParent "builds/$app" "dist/Ghostty-Smooth-macos-aarch64.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-aarch64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum Ghostty-Smooth-*.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/Ghostty-Smooth-*.zip
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          **Experimental build.** Ghostty Smooth is a personal fork of Ghostty that tries out pixel smooth scrolling. It may be unstable, it is not an official Ghostty release, and it is not affiliated with the Ghostty project. For Ghostty itself see https://ghostty.org.
+
+          What it adds: pixel smooth scrollback, and an opt-in escape sequence that lets TUI apps scroll (or shift) regions smoothly. See SMOOTH.md on the `smooth` branch.
+
+          - macOS on Apple Silicon only; not notarized by Apple.
+          - Install with `smooth-scroll/release/install.sh`, which verifies the SSH signature on SHA256SUMS and the archive checksum before installing.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Ghostty Smooth ${GITHUB_REF_NAME#smooth-v} (experimental)" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --draft \
+            --prerelease \
+            --verify-tag

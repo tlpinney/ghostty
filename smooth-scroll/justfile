@@ -1,0 +1,30 @@
+# Ghostty Smooth release recipes. Run from anywhere:
+#   just -f smooth-scroll/justfile <recipe>
+
+set working-directory := ".."
+
+repo := "tlpinney/ghostty"
+
+# Tag the current `smooth` commit and push the tag; CI builds a draft release.
+release tag:
+    git fetch origin smooth
+    test "$(git rev-parse HEAD)" = "$(git rev-parse origin/smooth)" || { echo "HEAD is not origin/smooth"; exit 1; }
+    git tag -a {{tag}} -m "Ghostty Smooth {{tag}}"
+    git push origin {{tag}}
+
+# Sign SHA256SUMS of a CI draft release with your SSH key and publish it.
+sign-release tag:
+    smooth-scroll/release/sign-release.sh {{tag}}
+
+# Fallback when CI can't build the app: build here, then upload it with its
+# SHA256SUMS to the tag's draft release (created if CI never got that far).
+build-local tag:
+    zig build -Doptimize=ReleaseFast
+    cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal
+    smooth-scroll/install.sh
+    case "$(readlink builds/current)" in *dirty*) echo "refusing to release a dirty build"; exit 1;; esac
+    mkdir -p dist
+    ditto -c -k --keepParent "builds/$(readlink builds/current)" dist/Ghostty-Smooth-macos-aarch64.zip
+    cd dist && shasum -a 256 Ghostty-Smooth-macos-aarch64.zip > SHA256SUMS
+    gh release view {{tag}} --repo {{repo}} >/dev/null 2>&1 || gh release create {{tag}} --repo {{repo}} --draft --prerelease --verify-tag --title "Ghostty Smooth {{tag}} (experimental)" --notes "**Experimental build** of a personal Ghostty fork (pixel smooth scrolling); not an official Ghostty release and not affiliated with the Ghostty project. Built locally because CI could not build this release."
+    gh release upload {{tag}} dist/Ghostty-Smooth-macos-aarch64.zip dist/SHA256SUMS --clobber --repo {{repo}}
