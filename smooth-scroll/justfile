@@ -19,12 +19,19 @@ sign-release tag:
 # Fallback when CI can't build the app: build here, then upload it with its
 # SHA256SUMS to the tag's draft release (created if CI never got that far).
 build-local tag:
-    zig build -Doptimize=ReleaseFast
-    cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal
+    #!/bin/sh
+    set -eu
+    t="{{tag}}"; t="${t#smooth-v}"
+    IFS=. read -r y m d n <<EOF
+    $t
+    EOF
+    base="$(sed -n 's/^ *\.version = "\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' build.zig.zon | head -1)"
+    zig build -Doptimize=ReleaseFast -Dversion-string="$base-smooth.$y$m$d${n:+.$n}"
+    (cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
     smooth-scroll/install.sh
     case "$(readlink builds/current)" in *dirty*) echo "refusing to release a dirty build"; exit 1;; esac
     mkdir -p dist
     ditto -c -k --keepParent "builds/$(readlink builds/current)" dist/Ghostty-Smooth-macos-aarch64.zip
-    cd dist && shasum -a 256 Ghostty-Smooth-macos-aarch64.zip > SHA256SUMS
+    (cd dist && shasum -a 256 Ghostty-Smooth-macos-aarch64.zip > SHA256SUMS)
     gh release view {{tag}} --repo {{repo}} >/dev/null 2>&1 || gh release create {{tag}} --repo {{repo}} --draft --prerelease --verify-tag --title "Ghostty Smooth {{tag}} (experimental)" --notes "**Experimental build** of a personal Ghostty fork (pixel smooth scrolling); not an official Ghostty release and not affiliated with the Ghostty project. Built locally because CI could not build this release."
     gh release upload {{tag}} dist/Ghostty-Smooth-macos-aarch64.zip dist/SHA256SUMS --clobber --repo {{repo}}

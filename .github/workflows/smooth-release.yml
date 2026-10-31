@@ -33,6 +33,18 @@ jobs:
         run: |
           git fetch --no-tags origin smooth
           git merge-base --is-ancestor "$GITHUB_SHA" origin/smooth
+      - name: Version from the tag
+        # Ghostty's build rejects any git tag that isn't vX.Y.Z, so pass the version
+        # explicitly: smooth-v2026.10.31[.N] -> 1.4.1-smooth.20261031[.N].
+        run: |
+          tag="${GITHUB_REF_NAME#smooth-v}"
+          IFS=. read -r y m d n <<EOF
+          $tag
+          EOF
+          case "$y$m$d" in *[!0-9]*|"") echo "tag must be smooth-vYYYY.MM.DD[.N]"; exit 1;; esac
+          base="$(sed -n 's/^ *\.version = "\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' build.zig.zon | head -1)"
+          echo "GHOSTTY_VERSION=$base-smooth.$y$m$d${n:+.$n}" >> "$GITHUB_ENV"
+          echo "version: $base-smooth.$y$m$d${n:+.$n}"
       - name: Install Zig ${{ env.ZIG_VERSION }}
         run: |
           curl -fsSLo zig.tar.xz "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz"
@@ -49,10 +61,10 @@ jobs:
       - name: uv (for the icon script)
         run: brew install uv
       - name: Smooth scroll tests
-        run: zig build test -Dtest-filter=smooth --summary all
+        run: zig build test -Dtest-filter=smooth -Dversion-string="$GHOSTTY_VERSION" --summary all
       - name: Build
         run: |
-          zig build -Doptimize=ReleaseFast
+          zig build -Doptimize=ReleaseFast -Dversion-string="$GHOSTTY_VERSION"
           (cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
       - name: Package
         run: |
