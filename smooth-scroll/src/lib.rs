@@ -4,7 +4,7 @@
 //! `ESC _ smooth;id;top;bottom;left;right;pos;max ESC \` after every draw. A patched Ghostty accumulates trackpad pixels over that
 //! region, shifts it by the sub-row remainder, and sends one wheel event per
 //! whole row. The app just scrolls one row per wheel event and redraws.
-//! See SMOOTH_SCROLL.md at the repository root for the protocol.
+//! See SMOOTH.md at the repository root for the protocol.
 
 use std::io::{self, Write};
 

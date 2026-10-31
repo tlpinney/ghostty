@@ -7,7 +7,7 @@
 //!
 //! Keys: j/k or arrows scroll, tab switches the keyboard pane (split),
 //! s toggles the smooth declaration, q quits.
-//! See SMOOTH_SCROLL.md at the repository root for the protocol.
+//! See SMOOTH.md at the repository root for the protocol.
 
 use std::io::{self, Write};
 use std::time::Duration;

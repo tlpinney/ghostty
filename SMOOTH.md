@@ -6,7 +6,8 @@ TUI apps that opt in through a small escape sequence. It is an
 experiment, not an upstream proposal, and it is not affiliated with the
 Ghostty project.
 
-All changes live on the `smooth-scroll` branch.
+All changes live on the `smooth` branch, the fork's default. The earlier
+`smooth-scroll` branch is kept, frozen, so older links keep working.
 
 ## AI disclosure
 
@@ -151,8 +152,8 @@ the [Lilex](https://github.com/mishamyrt/Lilex) font.
 
 The terminal multiplexer [herdr](https://github.com/herdrdev/herdr) needs
 its own patch to relay regions from panes to this Ghostty: see
-[tlpinney/herdr](https://github.com/tlpinney/herdr), branch
-`smooth-scroll` (based on herdr v0.9.5, with its own `SMOOTH_SCROLL.md`).
+[tlpinney/herdr](https://github.com/tlpinney/herdr), its default branch
+(based on herdr v0.9.5, with its own `SMOOTH_SCROLL.md`).
 Without it, apps inside herdr fall back to row scrolling.
 
 To try it next to an installed herdr without touching its session, build
