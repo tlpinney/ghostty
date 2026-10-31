@@ -178,7 +178,7 @@ smooth rendering only exists in the Metal renderer.
 The terminal multiplexer [herdr](https://github.com/herdrdev/herdr) needs
 its own patch to relay regions from panes to this Ghostty: see
 [tlpinney/herdr](https://github.com/tlpinney/herdr), its default branch
-(based on herdr v0.9.5, with its own `SMOOTH_SCROLL.md`).
+(based on herdr v0.9.5, with its own `SMOOTH.md`).
 Without it, apps inside herdr fall back to row scrolling.
 
 To try it next to an installed herdr without touching its session, build

@@ -33,10 +33,16 @@ BANNER
 command -v ssh-keygen >/dev/null || fail "ssh-keygen is needed to verify the release"
 
 if [ $# -ge 1 ]; then
-  base="https://github.com/$repo/releases/download/$1"
+  tag="$1"
 else
-  base="https://github.com/$repo/releases/latest/download"
+  # GitHub's "latest" skips prereleases, and these are prereleases, so ask the
+  # API for the newest published smooth-v release (drafts are not listed).
+  tag="$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=30" \
+    | sed -n 's/^ *"tag_name": *"\(smooth-v[^"]*\)".*/\1/p' | head -1)"
+  [ -n "$tag" ] || fail "could not find a published smooth-v release"
 fi
+base="https://github.com/$repo/releases/download/$tag"
+echo "ghostty-smooth: installing $tag" >&2
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

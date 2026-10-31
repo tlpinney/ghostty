@@ -66,6 +66,9 @@ jobs:
         run: |
           zig build -Doptimize=ReleaseFast -Dversion-string="$GHOSTTY_VERSION"
           (cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
+          # The Xcode project carries its own version; show the release's instead.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $GHOSTTY_VERSION" \
+            macos/build/ReleaseLocal/Ghostty.app/Contents/Info.plist
       - name: Package
         run: |
           smooth-scroll/install.sh
@@ -113,7 +116,7 @@ jobs:
           - macOS on Apple Silicon only; not notarized by Apple.
           - Install with `smooth-scroll/release/install.sh`, which verifies the SSH signature on SHA256SUMS and the archive checksum before installing.
           NOTES
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/Ghostty-Smooth-*.zip dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "Ghostty Smooth ${GITHUB_REF_NAME#smooth-v} (experimental)" \
             --notes-file "$RUNNER_TEMP/notes.md" \

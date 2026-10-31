@@ -26,8 +26,10 @@ build-local tag:
     $t
     EOF
     base="$(sed -n 's/^ *\.version = "\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' build.zig.zon | head -1)"
-    zig build -Doptimize=ReleaseFast -Dversion-string="$base-smooth.$y$m$d${n:+.$n}"
+    version="$base-smooth.$y$m$d${n:+.$n}"
+    zig build -Doptimize=ReleaseFast -Dversion-string="$version"
     (cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal)
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" macos/build/ReleaseLocal/Ghostty.app/Contents/Info.plist
     smooth-scroll/install.sh
     case "$(readlink builds/current)" in *dirty*) echo "refusing to release a dirty build"; exit 1;; esac
     mkdir -p dist
