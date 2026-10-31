@@ -261,6 +261,10 @@ pub const Uniforms = extern struct {
     /// Pixels to shift each smooth scroll region up by.
     smooth_offsets: [max_smooth_regions]f32 align(4) = @splat(0),
 
+    /// Pixels to shift each region left by, or negative when the region
+    /// has no overscan column (no horizontal shift).
+    smooth_offsets_x: [max_smooth_regions]f32 align(4) = @splat(-1),
+
     smooth_count: u32 align(4) = 0,
 
     pub const max_smooth_regions = 8;

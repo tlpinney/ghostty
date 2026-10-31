@@ -44,6 +44,7 @@ ESC _ smooth ; id ; top ; bottom ; left ; right ; pos ; max ESC \   declare / up
 ESC _ smooth ; top ; bottom ; pos ; max ESC \                       legacy: id 0, full width
 ESC _ smooth ; off ESC \                                            clear all regions
 ESC _ smooth ; off ; id ESC \                                       clear one region
+ESC _ smooth ; id ; top ; bottom ; left ; right ; pos ; max ; ox ; oy ESC \   with an app-set shift
 ```
 
 - `id`: identifies the region, so an app (or a multiplexer, one per pane)
@@ -67,6 +68,26 @@ direction of outstanding wheel requests, Ghostty treats it as an
 acknowledgement and subtracts those rows from its offset, so the view
 never jumps back while the app catches up. Moves the app makes on its own
 (keyboard, jumps) don't disturb the accumulated offset.
+
+### App-set shift (protocol 3)
+
+Content the app moves itself, such as a map being dragged, can also be
+drawn between cells. Appending `ox ; oy` to a declaration asks Ghostty to
+draw the region `ox` thousandths of a cell to the left and `oy`
+thousandths of a cell up (each 0-999). The region's `right` column then
+becomes an overscan column too, hidden until the content shifts into it,
+just like the `bottom` row. The app renders on the cell grid and sends the
+remainder with every redraw, in the same synchronized update. The `oy`
+shift adds to any trackpad remainder, still capped below one row.
+
+The capability query `ESC _ smooth;? ESC \` answers
+`ESC _ smooth;ok;3 ESC \` on terminals that understand the shift form;
+protocol 2 terminals reject the longer declaration.
+
+A region declared with `max` 0 has nothing to scroll, so Ghostty leaves
+precision scrolls over it to the app as ordinary wheel events. An app that
+only wants the shift (a map that zooms on the wheel and pans by dragging)
+declares `pos` 0 and `max` 0.
 
 The region is cleared on `smooth;off` and when the app switches between
 the primary and alternate screen. Terminals that don't know the sequence

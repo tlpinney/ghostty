@@ -257,9 +257,12 @@ test "preedit range shifts left at right edge" {
 /// region shifts.
 ///
 ///   ESC _ smooth;ID;top;bottom;left;right;pos;max ESC \   declare/update
+///   ESC _ smooth;ID;top;bottom;left;right;pos;max;ox;oy ESC \
+///                                                         ...with an app-set
+///                                                         shift (see `shift`)
 ///   ESC _ smooth;top;bottom;pos;max ESC \                 legacy: id 0, full width
 ///   ESC _ smooth;off[;ID] ESC \                           clear all or one
-///   ESC _ smooth;? ESC \                                  query; reply smooth;ok;2
+///   ESC _ smooth;? ESC \                                  query; reply smooth;ok;3
 ///
 /// Rows and columns are 0-based and inclusive.
 pub const Smooth = struct {
@@ -267,7 +270,7 @@ pub const Smooth = struct {
 
     /// Reply to the capability query `ESC _ smooth;? ESC \`: the protocol
     /// version this terminal implements.
-    pub const query_reply = "\x1b_smooth;ok;2\x1b\\";
+    pub const query_reply = "\x1b_smooth;ok;3\x1b\\";
 
     id: u32,
     top: u16,
@@ -287,6 +290,12 @@ pub const Smooth = struct {
     /// reflected in `pos`.
     pending_rows: i32 = 0,
 
+    /// App-set sub-cell shift in thousandths of a cell (x left, y up),
+    /// for content the app moves itself, such as a dragged map. When set,
+    /// `right` is an overscan column as well, hidden until the region
+    /// shifts left into it. The y shift adds to the scroll remainder.
+    shift: ?[2]u16 = null,
+
     pub const Command = union(enum) {
         set: Smooth,
         /// Clear one region, or all of them when null.
@@ -295,7 +304,7 @@ pub const Smooth = struct {
 
     /// Parse the payload after `smooth;`.
     pub fn parse(payload: []const u8) error{Invalid}!Command {
-        var v: [7]u32 = undefined;
+        var v: [9]u32 = undefined;
         var n: usize = 0;
         var it = std.mem.splitScalar(u8, payload, ';');
         if (std.mem.eql(u8, it.peek() orelse "", "off")) {
@@ -310,11 +319,14 @@ pub const Smooth = struct {
         }
         const r: [7]u32 = switch (n) {
             4 => .{ 0, v[0], v[1], 0, std.math.maxInt(u16), v[2], v[3] },
-            7 => v,
+            7, 9 => v[0..7].*,
             else => return error.Invalid,
         };
         const max16 = std.math.maxInt(u16);
         if (r[1] >= r[2] or r[2] > max16 or r[3] > r[4] or r[4] > max16)
+            return error.Invalid;
+        // A shifted region needs a visible column besides its overscan one.
+        if (n == 9 and (r[3] >= r[4] or v[7] > 999 or v[8] > 999))
             return error.Invalid;
         return .{ .set = .{
             .id = r[0],
@@ -324,6 +336,7 @@ pub const Smooth = struct {
             .right = @intCast(r[4]),
             .pos = r[5],
             .max = r[6],
+            .shift = if (n == 9) .{ @intCast(v[7]), @intCast(v[8]) } else null,
         } };
     }
 
@@ -350,14 +363,30 @@ pub const Smooth = struct {
         }
     }
 
+    /// Whether precision scrolls over the region are taken over and turned
+    /// into smooth scrolling. A region with nothing to scroll (`max` 0),
+    /// such as one declared only for its shift, passes them to the app.
+    pub fn capturesScroll(self: Smooth) bool {
+        return self.max > 0;
+    }
+
     pub fn contains(self: Smooth, x: usize, y: usize) bool {
         return y >= self.top and y <= self.bottom and x >= self.left and x <= self.right;
     }
 
-    /// The pixel offset to render: the sub-row remainder, held between
-    /// zero and just under one row since only one overscan row exists.
+    /// The vertical offset to render, in rows: the scroll remainder plus
+    /// any app-set shift, held between zero and just under one row since
+    /// only one overscan row exists.
     pub fn offsetRows(self: Smooth) f32 {
-        return std.math.clamp(self.acc, 0, 0.999);
+        const app: f32 = if (self.shift) |sh| @as(f32, @floatFromInt(sh[1])) / 1000 else 0;
+        return std.math.clamp(std.math.clamp(self.acc, 0, 0.999) + app, 0, 0.999);
+    }
+
+    /// The horizontal offset to render, in columns, or null when the
+    /// region has no overscan column.
+    pub fn offsetCols(self: Smooth) ?f32 {
+        const sh = self.shift orelse return null;
+        return @as(f32, @floatFromInt(sh[0])) / 1000;
     }
 };
 
@@ -399,6 +428,34 @@ pub fn smoothAt(self: *State, x: usize, y: usize) ?*Smooth {
         }
     }
     return null;
+}
+
+test "smooth: parse an app-set shift" {
+    const testing = std.testing;
+
+    const s = (try Smooth.parse("4;0;30;0;99;10;500;250;750")).set;
+    try testing.expectEqual(@as(u16, 99), s.right);
+    try testing.expectEqual([2]u16{ 250, 750 }, s.shift.?);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), s.offsetCols().?, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), s.offsetRows(), 0.0001);
+
+    try testing.expect(s.capturesScroll());
+    const shift_only = (try Smooth.parse("4;0;30;0;99;0;0;250;750")).set;
+    try testing.expect(!shift_only.capturesScroll());
+
+    // No shift: no overscan column, and the plain v2 form still parses.
+    const plain = (try Smooth.parse("4;0;30;0;99;10;500")).set;
+    try testing.expectEqual(@as(?f32, null), plain.offsetCols());
+
+    // Out of range or a region with no visible column besides the overscan one.
+    try testing.expectError(error.Invalid, Smooth.parse("4;0;30;0;99;10;500;1000;0"));
+    try testing.expectError(error.Invalid, Smooth.parse("4;0;30;5;5;10;500;0;0"));
+    try testing.expectError(error.Invalid, Smooth.parse("4;0;30;0;99;10;500;1"));
+
+    // The y shift adds to the scroll remainder but stays under one row.
+    var sum = s;
+    sum.acc = 0.5;
+    try testing.expectApproxEqAbs(@as(f32, 0.999), sum.offsetRows(), 0.0001);
 }
 
 test "smooth: parse v2, legacy, and clear" {

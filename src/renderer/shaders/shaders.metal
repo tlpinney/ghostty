@@ -26,11 +26,13 @@ struct Uniforms {
   bool use_linear_correction;
   ushort4 smooth_rects[8];
   float smooth_offsets[8];
+  float smooth_offsets_x[8];
   uint smooth_count;
 };
 
 // The smooth scroll region containing a grid cell (overscan included),
-// or -1. Rects are (top, overscan bottom, left, right), inclusive.
+// or -1. Rects are (top, overscan bottom, left, right), inclusive; a region
+// with a non-negative x offset also has `right` as an overscan column.
 static int smooth_region_at(constant Uniforms& u, int2 cell) {
   for (uint i = 0; i < u.smooth_count; i++) {
     int4 r = int4(u.smooth_rects[i]);
@@ -477,8 +479,14 @@ fragment float4 cell_bg_fragment(
   int region = smooth_region_at(uniforms, grid_pos);
   if (region >= 0) {
     if (grid_pos.y == int(uniforms.smooth_rects[region].y)) return bg;
+    float ox = uniforms.smooth_offsets_x[region];
+    if (ox >= 0.0 && grid_pos.x == int(uniforms.smooth_rects[region].w)) return bg;
     float y = in.position.y - uniforms.grid_padding.x + uniforms.smooth_offsets[region];
     grid_pos.y = int(floor(y / uniforms.cell_size.y));
+    if (ox >= 0.0) {
+      float x = in.position.x - uniforms.grid_padding.w + ox;
+      grid_pos.x = int(floor(x / uniforms.cell_size.x));
+    }
   }
 
   // Clamp x position, extends edge bg colors in to padding on sides.
@@ -614,10 +622,17 @@ vertex CellTextVertexOut cell_text_vertex(
   int region = smooth_region_at(uniforms, int2(in.grid_pos));
   if (region >= 0) {
     float4 r = float4(uniforms.smooth_rects[region]);
+    float ox = uniforms.smooth_offsets_x[region];
     cell_pos.y -= uniforms.smooth_offsets[region];
+    // With an overscan column, shift left and keep that column hidden.
+    float right = r.w + 1;
+    if (ox >= 0.0) {
+      cell_pos.x -= ox;
+      right = r.w;
+    }
     out.clip = float4(
       uniforms.grid_padding.x + r.xy * uniforms.cell_size.y,
-      uniforms.grid_padding.w + float2(r.z, r.w + 1) * uniforms.cell_size.x
+      uniforms.grid_padding.w + float2(r.z, right) * uniforms.cell_size.x
     );
   }
 

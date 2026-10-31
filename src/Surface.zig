@@ -3692,6 +3692,9 @@ pub fn scrollCallback(
             const pos = try self.rt_surface.getCursorPos();
             const cell = self.posToViewport(pos.x, pos.y);
             const s = self.renderer_state.smoothAt(cell.x, cell.y) orelse break :region;
+            // A region with nothing to scroll (e.g. one used only for an
+            // app-set shift) leaves scrolling to the app as usual.
+            if (!s.capturesScroll()) break :region;
 
             const cell_h: f64 = @floatFromInt(self.size.cell.height);
             const px = yoff * self.config.mouse_scroll_multiplier.precision;

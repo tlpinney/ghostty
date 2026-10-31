@@ -1435,12 +1435,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // viewport has since snapped to the bottom (e.g. new output).
                 {
                     const cell_h: f32 = @floatFromInt(self.grid_metrics.cell_height);
+                    const cell_w: f32 = @floatFromInt(self.grid_metrics.cell_width);
                     var n: u32 = 0;
                     for (state.smooth) |slot| {
                         const s = slot orelse continue;
                         if (n == self.uniforms.smooth_rects.len) break;
                         self.uniforms.smooth_rects[n] = .{ s.top, s.bottom, s.left, s.right };
                         self.uniforms.smooth_offsets[n] = s.offsetRows() * cell_h;
+                        self.uniforms.smooth_offsets_x[n] = if (s.offsetCols()) |c| c * cell_w else -1;
                         n += 1;
                     }
                     self.uniforms.smooth_count = n;
