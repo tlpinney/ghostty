@@ -1,5 +1,5 @@
 > [!NOTE]
-> **This is an experimental fork** adding Zed-style pixel smooth scrolling
+> **This is an experimental fork** adding pixel smooth scrolling
 > (scrollback plus an opt-in protocol for TUI apps, with a Ratatui demo).
 > See [SMOOTH.md](SMOOTH.md). Not affiliated with the Ghostty
 > project; for Ghostty itself see
